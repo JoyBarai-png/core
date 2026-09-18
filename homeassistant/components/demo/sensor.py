@@ -67,7 +67,7 @@ async def async_setup_entry(
             DemoSensor(
                 "sensor_3",
                 "sensor_3",
-                "Carbon monoxide",
+                "Carbon monoxide - Joy - Changed for Assignment 1",
                 54,
                 SensorDeviceClass.CO,
                 SensorStateClass.MEASUREMENT,
