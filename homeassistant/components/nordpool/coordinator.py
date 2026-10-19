@@ -121,8 +121,6 @@ class NordPoolDataUpdateCoordinator(DataUpdateCoordinator[DeliveryPeriodsData]):
     @override
     async def _async_update_data(self) -> DeliveryPeriodsData:
         """Fetch the latest data from Nord Pool."""
-        data: dict[date, DeliveryPeriodData] = {}
-
         today_data = self.get_data_current_day() if self.has_current_day_data else None
         tomorrow_data = self.get_data_tomorrow() if self.has_tomorrow_data else None
 
@@ -131,24 +129,37 @@ class NordPoolDataUpdateCoordinator(DataUpdateCoordinator[DeliveryPeriodsData]):
             return self.data
 
         if not today_data:
-            try:
-                today_data = await self._api_call(0)
-            except (
-                NordPoolError,
-                TimeoutError,
-                aiohttp.ClientError,
-            ) as error:
-                raise UpdateFailed(
-                    translation_domain=DOMAIN,
-                    translation_key="connection_error",
-                ) from error
+            today_data = await self._fetch_today_data_from_api()
 
-            if today_data and not today_data.entries:
-                raise UpdateFailed(
-                    translation_domain=DOMAIN,
-                    translation_key="no_day_data",
-                )
+        tomorrow_data = await self._fetch_tomorrow_data_from_api(tomorrow_data)
 
+        return self._build_delivery_periods_data(today_data, tomorrow_data)
+
+    async def _fetch_today_data_from_api(self) -> DeliveryPeriodData:
+        """Fetch today's data from API with error handling."""
+        try:
+            today_data = await self._api_call(0)
+        except (
+            NordPoolError,
+            TimeoutError,
+            aiohttp.ClientError,
+        ) as error:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="connection_error",
+            ) from error
+
+        if today_data is None or not today_data.entries:
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="no_day_data",
+            )
+        return today_data
+
+    async def _fetch_tomorrow_data_from_api(
+        self, tomorrow_data: DeliveryPeriodData | None
+    ) -> DeliveryPeriodData | None:
+        """Fetch tomorrow's data from API if not already present."""
         if not tomorrow_data:
             try:
                 tomorrow_data = await self._api_call(1)
@@ -162,13 +173,19 @@ class NordPoolDataUpdateCoordinator(DataUpdateCoordinator[DeliveryPeriodsData]):
                 LOGGER.debug("Error getting prices for tomorrow: %s", error)
 
         if tomorrow_data and not tomorrow_data.entries:
-            tomorrow_data = None
+            return None
+
+        return tomorrow_data
+
+    def _build_delivery_periods_data(
+        self, today_data: DeliveryPeriodData, tomorrow_data: DeliveryPeriodData | None
+    ) -> DeliveryPeriodsData:
+        """Build and return the final DeliveryPeriodsData object."""
+        data: dict[date, DeliveryPeriodData] = {}
 
         yesterday = (get_nordpool_current_time() - timedelta(days=1)).date()
         yesterday_raw: dict[str, Any] = self.data.raw[yesterday.isoformat()]
-        yesterday_data = self.data.entries.get(
-            (get_nordpool_current_time() - timedelta(days=1)).date()
-        )
+        yesterday_data = self.data.entries.get(yesterday)
 
         if TYPE_CHECKING:
             assert today_data
